@@ -147,6 +147,9 @@ dmypy.json
 
 # папки со статикой и медиа
 media/
+blogicum/static_dev/css
 
+.sqlite3
+.sqlite
+.json
 sent_emails/
-
