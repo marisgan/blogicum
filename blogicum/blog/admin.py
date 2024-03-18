@@ -1,11 +1,22 @@
 from django.contrib import admin  # type: ignore
 
 # Register your models here.
-from .models import Category, Location, Post
+from .models import Category, Comment, Location, Post
 
 admin.site.empty_value_display = 'Не задано'
 
 
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    list_display = (
+        'text', 'post', 'author', 'created_at'
+    )
+    search_fields = ('text', 'post', 'author')
+    list_filter = ('post', 'author')
+    list_display_links = ('post',)
+
+
+@admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
     list_display = (
         'title',
@@ -26,6 +37,7 @@ class PostAdmin(admin.ModelAdmin):
     list_display_links = ('title',)
 
 
+@admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     list_display = (
         'title',
@@ -41,6 +53,7 @@ class CategoryAdmin(admin.ModelAdmin):
     search_fields = ('title', 'slug')
 
 
+@admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):
     list_display = (
         'name',
@@ -52,8 +65,3 @@ class LocationAdmin(admin.ModelAdmin):
     )
     list_display_links = ('name',)
     search_fields = ('name',)
-
-
-admin.site.register(Category, CategoryAdmin)
-admin.site.register(Location, LocationAdmin)
-admin.site.register(Post, PostAdmin)

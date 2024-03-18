@@ -4,10 +4,9 @@ from django.contrib.auth.mixins import (  # type: ignore
     LoginRequiredMixin, UserPassesTestMixin
 )
 from django.contrib.auth.decorators import login_required  # type: ignore
-from django.core.exceptions import PermissionDenied  # type: ignore
 from django.core.paginator import Paginator  # type: ignore
+from django.db.models import Count  # type: ignore
 from django.http import Http404  # type: ignore
-from django.http.response import HttpResponseRedirect  # type: ignore
 from django.shortcuts import (  # type: ignore
     get_object_or_404, redirect, render
 )
@@ -26,32 +25,33 @@ def paginate_posts(request, posts):
     return Paginator(posts, POSTS_PER_PAGE).get_page(request.GET.get('page'))
 
 
-def filter_published(posts):
-    return posts.select_related(
-        'author', 'category', 'location'
-    ).filter(
+def count_comments(posts):
+    return posts.annotate(
+        comments_count=Count('comments', distinct=True)
+    ).order_by('-pub_date')
+
+
+def filter_published(posts, is_author=False):
+    feed = posts.select_related(
+        'author', 'category', 'location')
+    if is_author:
+        return feed
+    return feed.filter(
         pub_date__date__lte=datetime.now(),
         is_published=True,
         category__is_published=True,
     )
 
 
-class OnlyAuthorMixin(UserPassesTestMixin):
-
-    def test_func(self):
-        object = self.get_object()
-        return object.author == self.request.user
-
-
 def profile(request, username):
-    profile = get_object_or_404(User, username=username)
-    if request.user.is_authenticated and request.user == profile:
-        posts = profile.posts.select_related('author', 'category', 'location')
+    author = get_object_or_404(User, username=username)
+    if request.user == author:
+        posts = filter_published(author.posts, is_author=True)
     else:
-        posts = filter_published(profile.posts)
+        posts = filter_published(author.posts)
     return render(request, 'blog/profile.html', {
-        'profile': profile,
-        'page_obj': paginate_posts(request, posts),
+        'profile': author,
+        'page_obj': paginate_posts(request, count_comments(posts)),
     })
 
 
@@ -62,24 +62,26 @@ def category_posts(request, category_slug):
         is_published=True)
     return render(request, 'blog/category.html', {
         'category': category,
-        'page_obj': paginate_posts(request, filter_published(category.posts)),
+        'page_obj': paginate_posts(
+            request, count_comments(filter_published(category.posts))),
     })
 
 
 @login_required
 def edit_profile(request, username):
-    instance = get_object_or_404(User, username=username)
-    if instance != request.user:
-        raise PermissionDenied
-    form = ProfileForm(request.POST or None, instance=instance)
+    author = get_object_or_404(User, username=username)
+    if author != request.user:
+        return redirect('blog:profile', username=username)
+    form = ProfileForm(request.POST or None, instance=author)
     if form.is_valid():
         form.save()
+        return redirect('blog:profile', username=username)
     return render(request, 'blog/user.html', {'form': form})
 
 
 class IndexListView(ListView):
     model = Post
-    queryset = filter_published(Post.objects)
+    queryset = count_comments(filter_published(Post.objects))
     template_name = 'blog/index.html'
     paginate_by = POSTS_PER_PAGE
 
@@ -90,18 +92,24 @@ class PostDetailView(DetailView):
     pk_url_kwarg = 'post_id'
 
     def dispatch(self, request, *args, **kwargs):
-        self.object = get_object_or_404(Post, id=kwargs['post_id'])
-        if self.object.author != request.user and not self.object.is_published:
+        post_obj = self.get_object()
+        if (
+            post_obj.author != request.user
+            and post_obj not in filter_published(Post.objects)
+        ):
+            # return redirect('blog:index')
+            # Тесты не пропускают редирект в этом месте
             raise Http404
         return super().dispatch(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['form'] = CommentForm()
-        context['comments'] = (
-            self.object.comments.select_related('author')
+        return dict(
+            super().get_context_data(**kwargs),
+            form=CommentForm(),
+            comments=(
+                self.object.comments.select_related('author')
+            ),
         )
-        return context
 
 
 class PostCreateView(LoginRequiredMixin, CreateView):
@@ -120,23 +128,23 @@ class PostCreateView(LoginRequiredMixin, CreateView):
         )
 
 
+class OnlyAuthorMixin(UserPassesTestMixin):
+
+    def test_func(self):
+        return self.get_object().author == self.request.user
+
+
 class PostUpdateView(OnlyAuthorMixin, UpdateView):
     model = Post
     form_class = PostForm
     template_name = 'blog/create.html'
     pk_url_kwarg = 'post_id'
 
-    def dispatch(self, request, *args, **kwargs):
-        self.object = get_object_or_404(Post, pk=kwargs['post_id'])
-        return super().dispatch(request, *args, **kwargs)
-
     def handle_no_permission(self):
-        return HttpResponseRedirect(
-            reverse('blog:post_detail', kwargs={'post_id': self.object.pk})
-        )
-
-    def get_success_url(self):
-        return reverse('blog:post_detail', kwargs={'post_id': self.object.id})
+        return redirect(reverse(
+            'blog:post_detail',
+            kwargs={'post_id': self.get_object().id}
+        ))
 
 
 class PostDeleteView(OnlyAuthorMixin, DeleteView):
@@ -147,7 +155,7 @@ class PostDeleteView(OnlyAuthorMixin, DeleteView):
     def get_success_url(self):
         return reverse(
             'blog:profile',
-            kwargs={'username': self.request.user.username}
+            args=[self.request.user.username]
         )
 
 
@@ -170,7 +178,7 @@ def add_comment(request, post_id):
 def edit_comment(request, post_id, comment_id):
     comment = get_object_or_404(Comment, id=comment_id)
     if comment.author != request.user:
-        raise PermissionDenied()
+        return redirect('blog:post_detail', post_id=post_id)
     form = CommentForm(request.POST or None, instance=comment)
     if form.is_valid():
         form.save()
@@ -185,7 +193,7 @@ def edit_comment(request, post_id, comment_id):
 def delete_comment(request, post_id, comment_id):
     comment = get_object_or_404(Comment, pk=comment_id)
     if comment.author != request.user:
-        raise PermissionDenied()
+        return redirect('blog:post_detail', post_id=post_id)
     if request.method == 'POST':
         comment.delete()
         return redirect('blog:post_detail', post_id=post_id)

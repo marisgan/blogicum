@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model  # type: ignore
-from django.db import models  # type: ignore
+from django.db import models   # type: ignore
 from django.urls import reverse    # type: ignore
 
 
@@ -17,6 +17,14 @@ class PublishedModel(models.Model):
     class Meta:
         abstract = True
         ordering = ('-created_at',)
+        # default_related_name = "%(class)ss"
+
+
+class RelatedName(models.Model):
+
+    class Meta:
+        abstract = True
+        default_related_name = '%(class)ss'
 
 
 class Category(PublishedModel):
@@ -62,7 +70,6 @@ class Post(PublishedModel):
         User,
         on_delete=models.CASCADE,
         verbose_name='Автор публикации',
-        related_name='posts'
     )
     location = models.ForeignKey(
         Location,
@@ -70,18 +77,16 @@ class Post(PublishedModel):
         null=True,
         blank=True,
         verbose_name='Местоположение',
-        related_name='posts'
     )
     category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
         verbose_name='Категория',
-        related_name='posts'
     )
     image = models.ImageField('Фото', upload_to='posts_images', blank=True)
 
-    class Meta(PublishedModel.Meta):
+    class Meta(PublishedModel.Meta, RelatedName.Meta):
         verbose_name = 'публикация'
         verbose_name_plural = 'Публикации'
         ordering = ('-pub_date',)
@@ -90,7 +95,7 @@ class Post(PublishedModel):
         return self.title[:10]
 
     def get_absolute_url(self):
-        return reverse('blog:post_detail', kwargs={'post_id': self.object.id})
+        return reverse('blog:post_detail', kwargs={'post_id': self.id})
 
 
 class Comment(models.Model):
@@ -99,7 +104,6 @@ class Comment(models.Model):
         Post,
         on_delete=models.CASCADE,
         verbose_name='Публикация',
-        related_name='comments',
     )
     created_at = models.DateTimeField('Добавлено', auto_now_add=True)
     author = models.ForeignKey(
@@ -108,7 +112,7 @@ class Comment(models.Model):
         verbose_name='Автор комментария',
     )
 
-    class Meta:
+    class Meta(RelatedName.Meta):
         verbose_name = 'комментарий'
         verbose_name_plural = 'Комментарии'
         ordering = ('created_at',)
