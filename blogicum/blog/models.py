@@ -20,10 +20,9 @@ class PublishedModel(models.Model):
         # default_related_name = "%(class)ss"
 
 
-class RelatedName(models.Model):
+class RelatedName():
 
     class Meta:
-        abstract = True
         default_related_name = '%(class)ss'
 
 

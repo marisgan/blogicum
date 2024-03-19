@@ -27,31 +27,37 @@ def paginate_posts(request, posts):
 
 def count_comments(posts):
     return posts.annotate(
-        comments_count=Count('comments', distinct=True)
+        comments_count=Count('comments')
     ).order_by('-pub_date')
 
 
-def filter_published(posts, is_author=False):
-    feed = posts.select_related(
-        'author', 'category', 'location')
-    if is_author:
-        return feed
-    return feed.filter(
+def filter_published(posts):
+    return posts.filter(
         pub_date__date__lte=datetime.now(),
         is_published=True,
         category__is_published=True,
     )
 
 
+def make_feed(posts, is_author=False, get_comments_num=True):
+    feed = posts.select_related(
+        'author', 'category', 'location')
+    if not is_author and not get_comments_num:
+        return feed
+    elif is_author and get_comments_num:
+        return count_comments(feed)
+    elif not is_author and get_comments_num:
+        return count_comments(filter_published(feed))
+
+
 def profile(request, username):
     author = get_object_or_404(User, username=username)
+    is_author = False
     if request.user == author:
-        posts = filter_published(author.posts, is_author=True)
-    else:
-        posts = filter_published(author.posts)
+        is_author = True
     return render(request, 'blog/profile.html', {
         'profile': author,
-        'page_obj': paginate_posts(request, count_comments(posts)),
+        'page_obj': paginate_posts(request, make_feed(author.posts, is_author))
     })
 
 
@@ -63,7 +69,7 @@ def category_posts(request, category_slug):
     return render(request, 'blog/category.html', {
         'category': category,
         'page_obj': paginate_posts(
-            request, count_comments(filter_published(category.posts))),
+            request, make_feed(category.posts)),
     })
 
 
@@ -81,7 +87,7 @@ def edit_profile(request, username):
 
 class IndexListView(ListView):
     model = Post
-    queryset = count_comments(filter_published(Post.objects))
+    queryset = make_feed(Post.objects)
     template_name = 'blog/index.html'
     paginate_by = POSTS_PER_PAGE
 
@@ -90,21 +96,19 @@ class PostDetailView(DetailView):
     model = Post
     template_name = 'blog/detail.html'
     pk_url_kwarg = 'post_id'
+    queryset = make_feed(Post.objects, is_author=True, get_comments_num=False)
 
     def dispatch(self, request, *args, **kwargs):
-        post_obj = self.get_object()
         if (
-            post_obj.author != request.user
-            and post_obj not in filter_published(Post.objects)
+            self.get_object().author != request.user
+            and not filter_published(Post.objects.filter(id=kwargs['post_id']))
         ):
-            # return redirect('blog:index')
-            # Тесты не пропускают редирект в этом месте
             raise Http404
         return super().dispatch(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
         return dict(
-            super().get_context_data(**kwargs),
+            **super().get_context_data(**kwargs),
             form=CommentForm(),
             comments=(
                 self.object.comments.select_related('author')
@@ -162,7 +166,7 @@ class PostDeleteView(OnlyAuthorMixin, DeleteView):
 @login_required
 def add_comment(request, post_id):
     post = get_object_or_404(
-        filter_published(Post.objects),
+        make_feed(Post.objects, get_comments_num=False),
         pk=post_id
     )
     form = CommentForm(request.POST)
