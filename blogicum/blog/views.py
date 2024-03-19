@@ -12,7 +12,7 @@ from django.shortcuts import (  # type: ignore
 )
 from django.urls import reverse  # type: ignore
 from django.views.generic import (  # type: ignore
-    CreateView, DetailView, DeleteView, ListView, UpdateView
+    CreateView, DeleteView, ListView, UpdateView
 )
 
 from .forms import CommentForm, PostForm, ProfileForm
@@ -25,39 +25,27 @@ def paginate_posts(request, posts):
     return Paginator(posts, POSTS_PER_PAGE).get_page(request.GET.get('page'))
 
 
-def count_comments(posts):
-    return posts.annotate(
-        comments_count=Count('comments')
-    ).order_by('-pub_date')
-
-
-def filter_published(posts):
-    return posts.filter(
-        pub_date__date__lte=datetime.now(),
-        is_published=True,
-        category__is_published=True,
-    )
-
-
-def make_feed(posts, is_author=False, get_comments_num=True):
+def make_feed(posts, is_author=False):
     feed = posts.select_related(
-        'author', 'category', 'location')
-    if not is_author and not get_comments_num:
-        return feed
-    elif is_author and get_comments_num:
-        return count_comments(feed)
-    elif not is_author and get_comments_num:
-        return count_comments(filter_published(feed))
+        'author', 'category', 'location'
+    ).annotate(
+        comments_count=Count('comments')
+    ).order_by(*Post._meta.ordering)
+    if not is_author:
+        return feed.filter(
+            pub_date__date__lte=datetime.now(),
+            is_published=True,
+            category__is_published=True,
+        )
+    return feed
 
 
 def profile(request, username):
     author = get_object_or_404(User, username=username)
-    is_author = False
-    if request.user == author:
-        is_author = True
     return render(request, 'blog/profile.html', {
         'profile': author,
-        'page_obj': paginate_posts(request, make_feed(author.posts, is_author))
+        'page_obj': paginate_posts(request, make_feed(
+            author.posts, request.user == author))
     })
 
 
@@ -92,28 +80,20 @@ class IndexListView(ListView):
     paginate_by = POSTS_PER_PAGE
 
 
-class PostDetailView(DetailView):
-    model = Post
-    template_name = 'blog/detail.html'
-    pk_url_kwarg = 'post_id'
-    queryset = make_feed(Post.objects, is_author=True, get_comments_num=False)
-
-    def dispatch(self, request, *args, **kwargs):
-        if (
-            self.get_object().author != request.user
-            and not filter_published(Post.objects.filter(id=kwargs['post_id']))
-        ):
-            raise Http404
-        return super().dispatch(request, *args, **kwargs)
-
-    def get_context_data(self, **kwargs):
-        return dict(
-            **super().get_context_data(**kwargs),
-            form=CommentForm(),
-            comments=(
-                self.object.comments.select_related('author')
-            ),
-        )
+def post_detail(request, post_id):
+    post_obj = get_object_or_404(
+        make_feed(Post.objects, is_author=True),
+        id=post_id)
+    if (
+        request.user != post_obj.author
+        and not make_feed(Post.objects.filter(id=post_id))
+    ):
+        raise Http404
+    return render(request, 'blog/detail.html', {
+        'post': post_obj,
+        'form': CommentForm(),
+        'comments': post_obj.comments.select_related('author'),
+    })
 
 
 class PostCreateView(LoginRequiredMixin, CreateView):
@@ -166,7 +146,7 @@ class PostDeleteView(OnlyAuthorMixin, DeleteView):
 @login_required
 def add_comment(request, post_id):
     post = get_object_or_404(
-        make_feed(Post.objects, get_comments_num=False),
+        make_feed(Post.objects),
         pk=post_id
     )
     form = CommentForm(request.POST)

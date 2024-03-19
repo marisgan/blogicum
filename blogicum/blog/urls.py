@@ -6,7 +6,7 @@ app_name = 'blog'
 
 urlpatterns = [
     path('posts/<int:post_id>/',
-         views.PostDetailView.as_view(),
+         views.post_detail,
          name='post_detail'),
     path('posts/<int:post_id>/comment/',
          views.add_comment,
