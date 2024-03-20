@@ -6,7 +6,6 @@ from django.contrib.auth.mixins import (  # type: ignore
 from django.contrib.auth.decorators import login_required  # type: ignore
 from django.core.paginator import Paginator  # type: ignore
 from django.db.models import Count  # type: ignore
-from django.http import Http404  # type: ignore
 from django.shortcuts import (  # type: ignore
     get_object_or_404, redirect, render
 )
@@ -25,13 +24,13 @@ def paginate_posts(request, posts):
     return Paginator(posts, POSTS_PER_PAGE).get_page(request.GET.get('page'))
 
 
-def make_feed(posts, is_author=False):
+def make_feed(posts, filtrate=True):
     feed = posts.select_related(
         'author', 'category', 'location'
     ).annotate(
         comments_count=Count('comments')
     ).order_by(*Post._meta.ordering)
-    if not is_author:
+    if filtrate:
         return feed.filter(
             pub_date__date__lte=datetime.now(),
             is_published=True,
@@ -45,7 +44,7 @@ def profile(request, username):
     return render(request, 'blog/profile.html', {
         'profile': author,
         'page_obj': paginate_posts(request, make_feed(
-            author.posts, request.user == author))
+            author.posts, request.user != author))
     })
 
 
@@ -81,18 +80,17 @@ class IndexListView(ListView):
 
 
 def post_detail(request, post_id):
-    post_obj = get_object_or_404(
-        make_feed(Post.objects, is_author=True),
+    post = get_object_or_404(
+        make_feed(Post.objects, filtrate=False),
         id=post_id)
-    if (
-        request.user != post_obj.author
-        and not make_feed(Post.objects.filter(id=post_id))
-    ):
-        raise Http404
+    if request.user != post.author:
+        post = get_object_or_404(
+            make_feed(Post.objects, filtrate=True),
+            id=post_id)
     return render(request, 'blog/detail.html', {
-        'post': post_obj,
+        'post': post,
         'form': CommentForm(),
-        'comments': post_obj.comments.select_related('author'),
+        'comments': post.comments.select_related('author'),
     })
 
 
